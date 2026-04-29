@@ -1,5 +1,9 @@
+import { symlinkSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { buildConfigFromArgv, runCli } from "../src/cli.js";
+import { buildConfigFromArgv, isMainModule, runCli } from "../src/cli.js";
 
 describe("buildConfigFromArgv", () => {
   it("builds default config", () => {
@@ -34,6 +38,16 @@ describe("buildConfigFromArgv", () => {
 
     expect(config.command).toBe("node");
     expect(config.args).toEqual(["fake.js"]);
+  });
+});
+
+describe("isMainModule", () => {
+  it("recognizes npm bin symlinks as the main module", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "watchdog-cli-"));
+    const symlinkPath = join(directory, "watchdog");
+    symlinkSync(new URL("../src/cli.ts", import.meta.url), symlinkPath);
+
+    expect(isMainModule(new URL("../src/cli.ts", import.meta.url).href, symlinkPath)).toBe(true);
   });
 });
 

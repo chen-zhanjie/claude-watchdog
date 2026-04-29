@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { createWatchdogConfig, type WatchdogConfig } from "./config.js";
@@ -88,7 +89,15 @@ function parseOptionalInteger(value: string | undefined): number | undefined {
   return Number.parseInt(value, 10);
 }
 
-if (fileURLToPath(import.meta.url) === process.argv[1]) {
+export function isMainModule(metaUrl: string, argvPath: string | undefined): boolean {
+  if (argvPath === undefined) {
+    return false;
+  }
+
+  return realpathSync(fileURLToPath(metaUrl)) === realpathSync(argvPath);
+}
+
+if (isMainModule(import.meta.url, process.argv[1])) {
   runCli(process.argv.slice(2)).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`[watchdog] ${message}\n`);

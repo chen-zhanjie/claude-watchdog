@@ -1,6 +1,6 @@
 {
   "name": "@chen-zhanjie/claude-watchdog",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A minimal watchdog for Claude Code that gently sends continue when output stalls.",
   "type": "module",
   "bin": {

@@ -7,6 +7,19 @@ import { createNotifier, type Notifier } from "./notifier.js";
 import { createPtyRunner } from "./pty-runner.js";
 import { ClaudeWatchdog, type Runner } from "./watchdog.js";
 
+type CliStdin = {
+  isTTY?: boolean;
+  setRawMode?: (mode: boolean) => void;
+  resume: () => void;
+  pause: () => void;
+  on: (event: "data", handler: (data: Buffer) => void) => void;
+};
+
+type CliStdout = {
+  write: (data: string) => void;
+  on: (event: "resize", handler: () => void) => void;
+};
+
 export type CliDependencies = {
   createRunner?: (config: WatchdogConfig) => Runner;
   createNotifier?: (script?: string) => Notifier;
@@ -15,6 +28,8 @@ export type CliDependencies = {
     config: WatchdogConfig;
     notify: Notifier;
   }) => Pick<ClaudeWatchdog, "start">;
+  stdin?: CliStdin;
+  stdout?: CliStdout;
 };
 
 type CliOptions = {
@@ -28,7 +43,7 @@ type CliOptions = {
 export function buildConfigFromArgv(argv: string[]): WatchdogConfig {
   const program = new Command();
   program
-    .name("watchdog")
+    .name("claude-watchdog")
     .description("Minimal Claude Code watchdog that sends Esc + 继续 when output stalls.")
     .allowExcessArguments(true)
     .helpOption("-h, --help", "display help for command")
@@ -62,23 +77,37 @@ export async function runCli(argv: string[], dependencies: CliDependencies = {})
     config,
     notify
   });
+  const stdin = dependencies.stdin ?? process.stdin;
+  const stdout = dependencies.stdout ?? process.stdout;
 
   runner.onData((data) => {
-    process.stdout.write(data);
+    stdout.write(data);
   });
 
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
+  runner.onExit((exit) => {
+    restoreTerminal(stdin);
+    process.exitCode = exit.exitCode ?? 0;
+    stdin.pause();
+  });
+
+  if (stdin.isTTY) {
+    stdin.setRawMode?.(true);
   }
-  process.stdin.resume();
-  process.stdin.on("data", (data: Buffer) => {
+  stdin.resume();
+  stdin.on("data", (data: Buffer) => {
     runner.write(data.toString());
   });
-  process.stdout.on("resize", () => {
+  stdout.on("resize", () => {
     // node-pty resize can be added later; the runner interface intentionally stays minimal for MVP.
   });
 
   watchdog.start();
+}
+
+function restoreTerminal(stdin: CliStdin): void {
+  if (stdin.isTTY) {
+    stdin.setRawMode?.(false);
+  }
 }
 
 function parseOptionalInteger(value: string | undefined): number | undefined {

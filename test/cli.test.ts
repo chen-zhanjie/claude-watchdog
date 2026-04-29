@@ -43,8 +43,8 @@ describe("buildConfigFromArgv", () => {
 
 describe("isMainModule", () => {
   it("recognizes npm bin symlinks as the main module", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "watchdog-cli-"));
-    const symlinkPath = join(directory, "watchdog");
+    const directory = await mkdtemp(join(tmpdir(), "claude-watchdog-cli-"));
+    const symlinkPath = join(directory, "claude-watchdog");
     symlinkSync(new URL("../src/cli.ts", import.meta.url), symlinkPath);
 
     expect(isMainModule(new URL("../src/cli.ts", import.meta.url).href, symlinkPath)).toBe(true);
@@ -64,11 +64,60 @@ describe("runCli", () => {
     const watchdog = { start: vi.fn() };
     const createWatchdog = vi.fn(() => watchdog);
 
-    await runCli(["--timeout-ms", "1000"], { createRunner, createNotifier, createWatchdog });
+    await runCli(["--timeout-ms", "1000"], {
+      createRunner,
+      createNotifier,
+      createWatchdog,
+      stdin: createFakeStdin(),
+      stdout: createFakeStdout()
+    });
 
     expect(createRunner).toHaveBeenCalledWith(expect.objectContaining({ idleTimeoutMs: 1000 }));
     expect(createNotifier).toHaveBeenCalledWith(undefined);
     expect(createWatchdog).toHaveBeenCalledWith(expect.objectContaining({ runner }));
     expect(watchdog.start).toHaveBeenCalledOnce();
   });
+
+  it("restores terminal mode and pauses stdin when Claude exits", async () => {
+    let exitHandler: ((exit: { exitCode: number | null }) => void) | undefined;
+    const runner = {
+      write: vi.fn(),
+      kill: vi.fn(),
+      onData: vi.fn(),
+      onExit: vi.fn((handler: (exit: { exitCode: number | null }) => void) => {
+        exitHandler = handler;
+      })
+    };
+    const stdin = createFakeStdin();
+
+    await runCli([], {
+      createRunner: () => runner,
+      createNotifier: () => vi.fn(),
+      createWatchdog: () => ({ start: vi.fn() }),
+      stdin,
+      stdout: createFakeStdout()
+    });
+
+    exitHandler?.({ exitCode: 0 });
+
+    expect(stdin.setRawMode).toHaveBeenCalledWith(false);
+    expect(stdin.pause).toHaveBeenCalledOnce();
+  });
 });
+
+function createFakeStdin() {
+  return {
+    isTTY: true,
+    setRawMode: vi.fn(),
+    resume: vi.fn(),
+    pause: vi.fn(),
+    on: vi.fn()
+  };
+}
+
+function createFakeStdout() {
+  return {
+    write: vi.fn(),
+    on: vi.fn()
+  };
+}

@@ -1,0 +1,60 @@
+import { describe, expect, it, vi } from "vitest";
+import { buildConfigFromArgv, runCli } from "../src/cli.js";
+
+describe("buildConfigFromArgv", () => {
+  it("builds default config", () => {
+    const config = buildConfigFromArgv([]);
+
+    expect(config.command).toBe("claude");
+    expect(config.args).toEqual(["--dangerously-skip-permissions"]);
+  });
+
+  it("parses watchdog options", () => {
+    const config = buildConfigFromArgv([
+      "--timeout-ms",
+      "1000",
+      "--max-attempts",
+      "1",
+      "--recovery-text",
+      "continue",
+      "--notify-script",
+      "/tmp/notify.sh",
+      "--no-esc"
+    ]);
+
+    expect(config.idleTimeoutMs).toBe(1000);
+    expect(config.maxAttempts).toBe(1);
+    expect(config.recoveryText).toBe("continue");
+    expect(config.notifyScript).toBe("/tmp/notify.sh");
+    expect(config.sendEscBeforeRecovery).toBe(false);
+  });
+
+  it("parses custom command after --", () => {
+    const config = buildConfigFromArgv(["--timeout-ms", "1000", "--", "node", "fake.js"]);
+
+    expect(config.command).toBe("node");
+    expect(config.args).toEqual(["fake.js"]);
+  });
+});
+
+describe("runCli", () => {
+  it("wires runner, watchdog, and notifier", async () => {
+    const runner = {
+      write: vi.fn(),
+      kill: vi.fn(),
+      onData: vi.fn(),
+      onExit: vi.fn()
+    };
+    const createRunner = vi.fn(() => runner);
+    const createNotifier = vi.fn(() => vi.fn());
+    const watchdog = { start: vi.fn() };
+    const createWatchdog = vi.fn(() => watchdog);
+
+    await runCli(["--timeout-ms", "1000"], { createRunner, createNotifier, createWatchdog });
+
+    expect(createRunner).toHaveBeenCalledWith(expect.objectContaining({ idleTimeoutMs: 1000 }));
+    expect(createNotifier).toHaveBeenCalledWith(undefined);
+    expect(createWatchdog).toHaveBeenCalledWith(expect.objectContaining({ runner }));
+    expect(watchdog.start).toHaveBeenCalledOnce();
+  });
+});

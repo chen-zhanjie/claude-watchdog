@@ -57,16 +57,20 @@ describe("ClaudeWatchdog", () => {
 
   it("sends Esc, recovery text, and Enter after idle timeout", () => {
     const runner = new FakeRunner();
+    const logger = vi.fn();
     const watchdog = new ClaudeWatchdog({
       runner,
       config: createWatchdogConfig({ idleTimeoutMs: 1000, recoveryText: "继续" }),
-      notify: vi.fn()
+      notify: vi.fn(),
+      logger
     });
 
     watchdog.start();
     vi.advanceTimersByTime(1000);
 
     expect(runner.writes).toEqual(["\x1b", "继续", "\r"]);
+    expect(logger).toHaveBeenCalledWith("started: timeout=1s maxAttempts=3 recovery=Esc + 继续");
+    expect(logger).toHaveBeenCalledWith("no output for 1s, sending recovery 1/3");
   });
 
   it("does not send Ctrl+C during recovery", () => {
@@ -81,6 +85,25 @@ describe("ClaudeWatchdog", () => {
     vi.advanceTimersByTime(1000);
 
     expect(runner.writes).not.toContain("\x03");
+  });
+
+  it("reports status changes", () => {
+    const runner = new FakeRunner();
+    const reportStatus = vi.fn();
+    const watchdog = new ClaudeWatchdog({
+      runner,
+      config: createWatchdogConfig({ idleTimeoutMs: 1000, maxAttempts: 2 }),
+      notify: vi.fn(),
+      reportStatus
+    });
+
+    watchdog.start();
+    vi.advanceTimersByTime(1000);
+    runner.emitExit(0);
+
+    expect(reportStatus).toHaveBeenCalledWith(expect.objectContaining({ state: "running", attempts: 0 }));
+    expect(reportStatus).toHaveBeenCalledWith(expect.objectContaining({ state: "recovering", attempts: 1 }));
+    expect(reportStatus).toHaveBeenCalledWith(expect.objectContaining({ state: "exited", exit: { exitCode: 0 } }));
   });
 
   it("can skip Esc when configured", () => {
@@ -100,10 +123,12 @@ describe("ClaudeWatchdog", () => {
   it("increments recovery attempts and stops at max attempts", () => {
     const runner = new FakeRunner();
     const notify = vi.fn();
+    const logger = vi.fn();
     const watchdog = new ClaudeWatchdog({
       runner,
       config: createWatchdogConfig({ idleTimeoutMs: 1000, maxAttempts: 2 }),
-      notify
+      notify,
+      logger
     });
 
     watchdog.start();
@@ -119,6 +144,39 @@ describe("ClaudeWatchdog", () => {
       command: "claude --dangerously-skip-permissions"
     });
     expect(watchdog.getState()).toBe("exhausted");
+    expect(logger).toHaveBeenCalledWith("recovery attempts exhausted after 2/2");
+  });
+
+  it("does not reset the idle timer for pure terminal redraws", () => {
+    const runner = new FakeRunner();
+    const watchdog = new ClaudeWatchdog({
+      runner,
+      config: createWatchdogConfig({ idleTimeoutMs: 1000 }),
+      notify: vi.fn()
+    });
+
+    watchdog.start();
+    vi.advanceTimersByTime(900);
+    runner.emitData("\x1b[?25l\x1b[1;1H\x1b[2K\x1b[?25h");
+    vi.advanceTimersByTime(100);
+
+    expect(runner.writes).toEqual(["\x1b", "继续", "\r"]);
+  });
+
+  it("does not reset the idle timer when tmux status redraws", () => {
+    const runner = new FakeRunner();
+    const watchdog = new ClaudeWatchdog({
+      runner,
+      config: createWatchdogConfig({ idleTimeoutMs: 1000 }),
+      notify: vi.fn()
+    });
+
+    watchdog.start();
+    vi.advanceTimersByTime(900);
+    runner.emitData("\x1b[999;1H\x1b[2Kclaude-watchdog running · attempts 0/3 · 100s left\x1b[1;1H");
+    vi.advanceTimersByTime(100);
+
+    expect(runner.writes).toEqual(["\x1b", "继续", "\r"]);
   });
 
   it("resets the idle timer when output arrives", () => {
